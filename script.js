@@ -39,7 +39,6 @@ async function getNews(keyword) {
 
     showLoading(true);
     resultContainer.innerHTML = "";
-    highlightSection.classList.add("hidden");
 
     try {
         const res = await fetch(`/api/news?query=${encodeURIComponent(keyword.trim())}`);
@@ -54,9 +53,9 @@ async function getNews(keyword) {
             showLoading(false);
             resultContainer.innerHTML = `
                 <div class="news-card">
-                <p class="news-summary">
-                "${keyword}"(으)로 검색된 뉴스가 없습니다. 다른 키워드로 검색해보세요.
-                </p>
+                    <p class="news-summary">
+                        "${keyword}"(으)로 검색된 뉴스가 없습니다. 다른 키워드로 검색해보세요.
+                    </p>
                 </div>
             `;
             return;
@@ -72,6 +71,7 @@ async function getNews(keyword) {
     resultContainer.innerHTML = "";
     articles.forEach((article) => {
         const card = document.createElement("article");
+        card.className = "news-card";
 
         card.innerHTML = `
             <div class="news-header">

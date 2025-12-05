@@ -41,7 +41,7 @@ async function summarize(text, title) {
 
     if (!HF_TOKEN) return "요약 생성 실패(HF_TOKEN 없음)";
 
-    const inputText = text.slice(0, 1500); // 너무 긴 본문은 요약 전에 자르기
+    const cleanText = text.replace(/\s+/g, " ").slice(0, 1200);
 
     const payload = {
         inputs: inputText,
