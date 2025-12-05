@@ -75,43 +75,51 @@ async function extractArticle(url) {
 	if (!url) return null;
 
 	try {
+		// 1) Google Redirect URL 요청
 		const res = await fetch(url, {
 			redirect: "follow",
 			headers: {
-				"User-Agent":
-					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36",
+				"User-Agent": "Mozilla/5.0",
 			},
 		});
 
+		// ⭐⭐⭐ 리다이렉트 후 진짜 기사 URL
+		const finalUrl = res.url;
+		console.log("📌 최종 기사 URL:", finalUrl);
+
+		// 만약 finalUrl이 news.google.com이면 실패
+		if (finalUrl.includes("news.google.com")) {
+			console.log("❌ 리다이렉트 실패:", finalUrl);
+			return null;
+		}
+
+		// 2) 최종 URL에서 HTML 읽기
 		const html = await res.text();
 		const $ = load(html);
 
-		// 1차: 흔히 쓰이는 기사 본문 선택자들
 		const selectors = [
 			"article",
 			"#articleBody",
-			"#articeBody",
 			".news_end",
-			".article",
 			".article-body",
 			".post-content",
-			"#content",
+			"#content"
 		];
 
 		for (const sel of selectors) {
 			const text = $(sel).text().replace(/\s+/g, " ").trim();
-			if (text && text.length > 300) {
+			if (text.length > 300) {
 				return text;
 			}
 		}
 
-		// 2차: 그래도 못 찾으면 body 전체에서 텍스트 추출
 		let bodyText = $("body").text().replace(/\s+/g, " ").trim();
 		if (bodyText.length > 400) {
 			return bodyText;
 		}
 
 		return null;
+
 	} catch (err) {
 		console.error("Extract error:", err);
 		return null;
