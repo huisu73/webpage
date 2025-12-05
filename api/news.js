@@ -1,7 +1,13 @@
+import fetch from "node-fetch";
+
 // 긴 텍스트도 안정적으로 요약하는 함수 (옵션 A)
 async function summarize(text, title) {
     const HF_TOKEN = process.env.HF_TOKEN;
-    if (!HF_TOKEN) return "요약 생성 실패(HF_TOKEN 없음)";
+
+    if (!HF_TOKEN) {
+        console.error("HF_TOKEN not found");
+        return "요약 생성 실패(HF_TOKEN 없음)";
+    }
 
   // ---------------------------
   // 1) 텍스트 정제
@@ -52,8 +58,8 @@ async function summarize(text, title) {
             const data = await res.json();
             return data?.[0]?.summary_text || "";
         } catch (e) {
-        console.error("Chunk summary error:", e);
-        return "";
+            console.error("Chunk summary error:", e);
+            return "";
         }
     }
 
@@ -110,5 +116,89 @@ async function summarize(text, title) {
     } catch (e) {
     console.error("Final summary error:", e);
     return "요약 생성 실패(최종 단계 오류)";
+    }
+}
+
+async function getNaverNews(query) {
+    const NAVER_ID = process.env.NAVER_CLIENT_ID;
+    const NAVER_SECRET = process.env.NAVER_CLIENT_SECRET;
+
+    if (!NAVER_ID || !NAVER_SECRET) {
+        console.error("네이버 API 키 누락");
+        return [];
+    }
+
+    const url = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(
+        query
+    )}&display=10&sort=sim`;
+
+    try {
+        const res = await fetch(url, {
+            headers: {
+                "X-Naver-Client-Id": NAVER_ID,
+                "X-Naver-Client-Secret": NAVER_SECRET,
+            },
+        });
+
+    const data = await res.json();
+
+    if (!data.items) return [];
+
+    // 기사 본문을 가져올 수 있는 링크 정리
+    return data.items.map((item) => ({
+        title: item.title.replace(/<[^>]+>/g, ""),
+        url: item.originallink || item.link,
+    }));
+    } catch (e) {
+    console.error("Naver API error:", e);
+    return [];
+    }
+}
+
+// ------------------------------
+// ✨ 실제 API 엔드포인트 (export default 필수!)
+// ------------------------------
+export default async function handler(req, res) {
+    const { query } = req.query;
+
+    if (!query) {
+        return res.status(400).json({ error: "query 파라미터가 필요합니다." });
+    }
+
+    try {
+        const articles = await getNaverNews(query);
+
+        const result = [];
+        for (const article of articles) {
+            let summary = "요약 생성 실패";
+
+            try {
+        // 기사 HTML 본문 가져오기
+                const html = await fetch(article.url).then((r) => r.text());
+
+        // HTML → 텍스트 변환
+                const text = html
+                    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+                    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+                    .replace(/<[^>]+>/g, " ")
+                    .replace(/\s+/g, " ")
+                    .trim();
+
+                summary = await summarize(text, article.title);
+            } catch (e) {
+                console.error("본문 크롤링 실패:", e);
+            }
+
+            result.push({
+                title: article.title,
+                url: article.url,
+                summary,
+            });
+        }
+
+    return res.status(200).json({ articles: result });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: "서버 내부 오류" });
     }
 }
