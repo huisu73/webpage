@@ -1,8 +1,9 @@
-import * as cheerio from "cheerio";
+// /api/news.js
+import fetch from "node-fetch";
 
-// ---------------------------------------------------
-// API HANDLER
-// ---------------------------------------------------
+/* ---------------------------------------------------
+   1) 구글 뉴스 검색
+--------------------------------------------------- */
 export default async function handler(req, res) {
 	try {
 		const query = req.query.query;
@@ -10,20 +11,13 @@ export default async function handler(req, res) {
 			return res.status(400).json({ error: "Missing query" });
 		}
 
-		// 1) 구글 뉴스 RSS에서 기사 목록 가져오기
+		// 구글 뉴스 검색 결과 가져오기
 		const results = await searchGoogleNews(query);
 
 		const articles = [];
-
 		for (const item of results) {
-			const content = await extractArticle(item.url);
-
-			let summary = "";
-			if (content) {
-				summary = await summarize(content);
-			} else {
-				summary = "본문을 가져오지 못했습니다.";
-			}
+			// URL 요약 생성
+			const summary = await summarizeByUrl(item.url);
 
 			articles.push({
 				title: item.title,
@@ -39,86 +33,54 @@ export default async function handler(req, res) {
 	}
 }
 
-// ---------------------------------------------------
-// STEP 1: 구글 뉴스 RSS에서 기사 목록 가져오기
-// ---------------------------------------------------
+/* ---------------------------------------------------
+   STEP 1 — 구글 뉴스 검색 페이지 파싱
+--------------------------------------------------- */
+
 async function searchGoogleNews(keyword) {
-	const url = `https://news.google.com/rss/search?q=${encodeURIComponent(
+	const searchUrl = `https://news.google.com/search?q=${encodeURIComponent(
 		keyword
-	)}&hl=ko&gl=KR&ceid=KR:ko`;
+	)}&hl=ko&gl=KR&ceid=KR%3Ako`;
 
-	const xml = await fetch(url, {
+	const html = await fetch(searchUrl, {
 		headers: {
-			"User-Agent": "Mozilla/5.0",
+			"User-Agent":
+				"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
 		},
-	}).then((res) => res.text());
+	}).then((r) => r.text());
 
-	// XML 모드로 로드
-	const $ = cheerio.load(xml, { xmlMode: true });
+	// h3 안의 a 태그만 추출하는 간단한 정규식 기반 파싱
+	const articleRegex = /<h3[^>]*><a[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/g;
 	const items = [];
 
-	$("item").each((_, el) => {
-		const title = $(el).find("title").text().trim();
-		let link = $(el).find("link").text().trim();
+	let match;
+	while ((match = articleRegex.exec(html)) !== null) {
+		let url = match[1];
+		const title = match[2].replace(/<[^>]+>/g, "").trim();
 
-		if (!title || !link) return;
-
-		items.push({ title, url: link });
-	});
-
-	// 너무 많으면 5개만 사용
-	return items.slice(0, 5);
-}
-
-// ---------------------------------------------------
-// STEP 2: 원문 페이지에서 실제 기사 본문 추출
-// ---------------------------------------------------
-async function extractArticle(url) {
-	const resp = await fetch(url, {
-		redirect: "follow",
-		headers: {
-			"User-Agent": "Mozilla/5.0",
-		},
-	});
-
-	const html = await resp.text();
-	const $ = cheerio.load(html);
-
-	const selectors = [
-		"article",
-		"#articleBody",
-		".news_end",
-		".article",
-		"#articeBody",
-		".post-content",
-		"#content",
-	];
-
-	for (const sel of selectors) {
-		const text = $(sel).text().trim();
-		if (text.length > 200) {
-			return text;
+		if (url.startsWith("./")) {
+			url = "https://news.google.com" + url.substring(1);
 		}
+
+		items.push({ title, url });
 	}
 
-	return null;
+	return items.slice(0, 5); // 최대 5개 기사만 사용
 }
 
-// ---------------------------------------------------
-// STEP 3: OpenAI(gpt-4o-mini)로 요약 생성
-// ---------------------------------------------------
-async function summarize(text) {
-	const clean = text.replace(/\s+/g, " ").trim();
+/* ---------------------------------------------------
+   STEP 2 — OpenAI로 URL 요약하기
+--------------------------------------------------- */
 
+async function summarizeByUrl(url) {
 	const prompt = `
-아래 뉴스 기사를 2~3줄로 자연스럽게 요약해줘.
-모든 문장은 평서문으로 끝나야 하고, 핵심 내용이 잘 드러나야 해.
+아래 뉴스 기사(URL)의 전체 내용을 읽고 핵심만 2~3줄로 자연스럽게 요약해줘.
+모든 문장은 한국어 평서문으로 끝나게 작성해줘.
 
-기사:
-${clean}
+URL: ${url}
 `;
 
-	const apiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+	const response = await fetch("https://api.openai.com/v1/chat/completions", {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
@@ -127,9 +89,9 @@ ${clean}
 		body: JSON.stringify({
 			model: "gpt-4o-mini",
 			messages: [{ role: "user", content: prompt }],
-			max_tokens: 200,
+			max_tokens: 250,
 		}),
 	}).then((r) => r.json());
 
-	return apiRes?.choices?.[0]?.message?.content || "요약을 생성할 수 없습니다.";
+	return response?.choices?.[0]?.message?.content || "요약 실패";
 }

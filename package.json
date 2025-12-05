@@ -1,14 +1,14 @@
 {
-    "name": "my-news-app",
-    "version": "1.0.0",
-    "private": true,
-    "type": "module",
-    "scripts": {
-        "dev": "vercel dev",
-        "start": "vercel dev"
-    },
-    "dependencies": {
-        "cheerio": "^1.1.2",
-        "openai": "^4.76.0"
-    }
+  "name": "my-news-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "start": "vercel dev"
+  },
+  "dependencies": {
+    "openai": "^4.76.0",
+    "node-fetch": "^3.3.2"
+  }
 }
