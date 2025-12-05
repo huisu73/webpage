@@ -55,10 +55,10 @@ async function searchGoogleNewsRSS(keyword) {
     $("item").each((_, el) => {
         const title = $(el).find("title").text().trim();
 
-        // ★ 진짜 기사 URL은 여기! ★
-        let realUrl = $(el).find("guid").text().trim();
+        // 🔥 한국 뉴스에서는 이 URL이 가장 정확함!!
+        let realUrl = $(el).find("source").attr("url");
 
-        // guid 없으면 link라도 사용
+        // fallback: 그래도 없으면 link 사용 (Google 뉴스 redirect URL)
         if (!realUrl) {
             realUrl = $(el).find("link").text().trim();
         }
