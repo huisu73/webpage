@@ -1,8 +1,5 @@
 // api/news.js
 
-// -------------------------------
-// 유틸 함수
-// -------------------------------
 function sanitizeHtml(text = "") {
   return text
     .replace(/<[^>]+>/g, "")
@@ -12,23 +9,9 @@ function sanitizeHtml(text = "") {
     .trim();
 }
 
-// 카테고리 자동 판별
-function inferCategory(title = "", description = "") {
-  const t = `${title} ${description}`;
-  if (/증시|주가|코스피|환율|경제|물가|금리/.test(t)) return "economy";
-  if (/대선|총선|국회|정부|정치|외교/.test(t)) return "politics";
-  if (/사건|사고|경찰|법원|사회|노동|복지/.test(t)) return "society";
-  if (/IT|인공지능|AI|과학|반도체|기술|테크/.test(t)) return "it_science";
-  if (/세계|국제|미국|중국|일본|유럽|외신/.test(t)) return "world";
-  if (/야구|축구|농구|배구|골프|올림픽|스포츠/.test(t)) return "sports";
-  if (/연예|영화|드라마|음악|아이돌|공연|문화/.test(t)) return "culture";
-  return "other";
-}
-
-// 네이버 뉴스 본문 크롤링 시도
+// 기사 본문 크롤링
 async function fetchArticleText(url) {
   if (!url) return "";
-
   try {
     const res = await fetch(url, {
       headers: {
@@ -43,74 +26,63 @@ async function fetchArticleText(url) {
     }
 
     const html = await res.text();
-    const text = sanitizeHtml(html);
-
-    return text.slice(0, 6000); // 너무 길면 자름
+    return sanitizeHtml(html).slice(0, 6000);
   } catch (e) {
     console.warn("fetchArticleText error:", e);
     return "";
   }
 }
 
-// -------------------------------
-// HuggingFace 무료 요약 API 호출
-// -------------------------------
+// ------------------------------------------------
+// HuggingFace Summarization API (무료, 안정적)
+// ------------------------------------------------
 async function summarize(text, title) {
   const HF_TOKEN = process.env.HF_TOKEN;
 
   if (!HF_TOKEN) {
-    console.error("HF_TOKEN is missing");
-    return "요약 생성 실패(HF_TOKEN 없음)";
+    console.error("HF_TOKEN missing");
+    return "요약 생성 실패(HF 토큰 없음)";
   }
 
-  // 긴 기사 → 3줄 요약 요청
-  const prompt = `
-다음 뉴스 기사 내용을 3줄로 요약해줘:
-
-제목: ${title}
-
-본문:
-${text}
-
-요약 조건:
-- 한국어로 작성
-- 불릿포인트 금지
-- 자연스러운 문장 3줄
-`;
+  const payload = {
+    inputs: text || title || "요약할 내용이 없습니다.",
+    parameters: {
+      max_length: 130,
+      min_length: 40,
+      do_sample: false
+    }
+  };
 
   try {
-    const response = await fetch(
-      "https://api-inference.huggingface.co/models/facebook/bart-large-cnn/v1/chat/completions",
+    const res = await fetch(
+      "https://api-inference.huggingface.co/models/facebook/bart-large-cnn",
       {
         method: "POST",
         headers: {
           Authorization: `Bearer ${HF_TOKEN}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          model: "facebook/bart-large-cnn",
-          messages: [{ role: "user", content: prompt }],
-          max_tokens: 200
-        })
+        body: JSON.stringify(payload)
       }
     );
 
-    const data = await response.json();
+    const data = await res.json();
 
-    // HuggingFace 형식 따라 결과 파싱
-    return (
-      data?.choices?.[0]?.message?.content?.trim() ||
-      "요약 생성 실패(응답 없음)"
-    );
+    if (Array.isArray(data) && data[0]?.summary_text) {
+      return data[0].summary_text.trim();
+    }
+
+    console.warn("Unexpected HF response", data);
+    return "요약 생성 실패(응답 형식 오류)";
   } catch (err) {
-    console.error("HuggingFace summarization error:", err);
+    console.error("HF summarize error:", err);
     return "요약 생성 실패(HF 오류)";
   }
 }
 
-// -------------------------------
+// ------------------------------------------------
 // 메인 핸들러
-// -------------------------------
+// ------------------------------------------------
 export default async function handler(req, res) {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
@@ -121,7 +93,7 @@ export default async function handler(req, res) {
   const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET;
 
   if (!NAVER_CLIENT_ID || !NAVER_CLIENT_SECRET) {
-    res.status(500).json({ error: "네이버 API 환경변수 누락" });
+    res.status(500).json({ error: "네이버 API 키 누락" });
     return;
   }
 
@@ -151,7 +123,6 @@ export default async function handler(req, res) {
     );
 
     if (!naverRes.ok) {
-      console.error("Naver API error:", naverRes.status);
       res.status(502).json({ error: "네이버 뉴스 API 호출 실패" });
       return;
     }
@@ -165,38 +136,28 @@ export default async function handler(req, res) {
     }
 
     // -----------------------------
-    // 2) 각 뉴스에 대해 요약 생성
+    // 2) 각 기사 요약 생성
     // -----------------------------
     const articles = await Promise.all(
       items.map(async (item) => {
-        const rawTitle = item.title || "";
-        const rawDesc = item.description || "";
-
-        const title = sanitizeHtml(rawTitle);
-        const description = sanitizeHtml(rawDesc);
-
+        const title = sanitizeHtml(item.title || "");
+        const description = sanitizeHtml(item.description || "");
         const url = item.originallink || item.link || "";
-        const category = inferCategory(title, description);
 
-        // 기사 본문 크롤링(403 뜨면 description 사용)
+        // 본문 크롤링 실패 시 description 사용
         const articleText =
-          (await fetchArticleText(url)) || description || "";
+          (await fetchArticleText(url)) || description || title;
 
-        // HuggingFace 요약 생성
         const summary = await summarize(articleText, title);
 
         return {
           title,
           summary,
-          url,
-          category
+          url
         };
       })
     );
 
-    // -----------------------------
-    // 최종 응답
-    // -----------------------------
     res.status(200).json({ articles });
   } catch (error) {
     console.error("Handler error:", error);
