@@ -1,13 +1,13 @@
 {
-  "name": "my-news-app",
-  "version": "1.0.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
+    "name": "my-news-app",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
     "dev": "vercel dev",
     "start": "vercel dev"
-  },
-  "dependencies": {
+    },
+    "dependencies": {
     "openai": "^4.76.0"
-  }
+    }
 }
