@@ -1,209 +1,140 @@
-import fetch from "node-fetch";
+// /api/news.js
 
-/* --------------------------------------------------------
-	텍스트 정리 함수
--------------------------------------------------------- */
-function cleanText(text) {
-	return text
-		.replace(/<[^>]+>/g, " ")
-		.replace(/\s+/g, " ")
-		.trim();
-}
+export default async function handler(req, res) {
+	try {
+		const query = req.query.query;
+		if (!query) return res.status(400).json({ error: "Missing query" });
 
-function splitSentences(text) {
-	return text
-		.split(/(?<=[.!?])\s+/)
-		.map(s => s.trim())
-		.filter(Boolean);
-}
+		const results = await searchGoogleNews(query);
 
-function forcePeriod(s) {
-	if (!s) return "";
-	return /[.!?]$/.test(s) ? s : s + ".";
-}
+		const articles = [];
+		for (const item of results) {
+			const content = await extractArticle(item.url);
 
-function extractKeySentence(sentList) {
-	let longest = sentList[0];
-	for (const s of sentList) {
-		if (s.length > longest.length) longest = s;
-	}
-	return longest;
-}
+			let summary = "";
+			if (content) {
+				summary = await summarize(content); // AI 요약
+			} else {
+				summary = "본문을 가져오지 못했습니다.";
+			}
 
-/* --------------------------------------------------------
-	강화된 요약 함수
--------------------------------------------------------- */
-async function summarize(text) {
-	const base = cleanText(text);
-	if (!base) return "요약을 생성할 수 없습니다.";
-
-	// 전체 문장을 분리
-	const sentences = splitSentences(base);
-	if (sentences.length === 0) return "요약을 생성할 수 없습니다.";
-
-	// 불용어(Stopwords) – 중요도 계산 보정용
-	const stopwords = ["그리고", "하지만", "그러나", "또한", "이어서", "이에 따르면"];
-
-	// 문장 중요도 점수 계산
-	const scored = sentences.map((s, idx) => {
-		let score = 0;
-
-		// 1) 길이가 너무 짧은 문장은 제외
-		if (s.length < 20) score -= 5;
-
-		// 2) 중복되는 접두 불용어가 있으면 감점
-		stopwords.forEach(sw => {
-			if (s.startsWith(sw)) score -= 2;
-		});
-
-		// 3) 본문 전체에서 중요한 단어가 포함되면 가산점
-		const keywords = ["수사", "요구", "혐의", "논란", "입장", "사과", "공식", "경찰"];
-		keywords.forEach(kw => {
-			if (s.includes(kw)) score += 3;
-		});
-
-		// 4) 본문 중간부의 문장도 골고루 선택되도록 가중치 부여
-		const normalizedIndex = idx / sentences.length;
-		if (normalizedIndex > 0.2 && normalizedIndex < 0.8) {
-			score += 1.5;
+			articles.push({
+				title: item.title,
+				url: item.url,
+				summary,
+			});
 		}
 
-		return { sentence: s, score };
+		return res.status(200).json({ articles });
+
+	} catch (err) {
+		console.error(err);
+		return res.status(500).json({ error: "Server error" });
+	}
+}
+
+
+/* ---------------------------------------------------
+   STEP 1 — 구글 뉴스 검색 페이지 HTML 가져오기
+--------------------------------------------------- */
+import cheerio from "cheerio";
+
+async function searchGoogleNews(keyword) {
+	const url = `https://news.google.com/search?q=${encodeURIComponent(keyword)}&hl=ko&gl=KR&ceid=KR%3Ako`;
+
+	const html = await fetch(url, {
+		headers: {
+			"User-Agent":
+				"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+		},
+	}).then((r) => r.text());
+
+	const $ = cheerio.load(html);
+	const items = [];
+
+	$("article").each((_, el) => {
+		const title = $(el).find("h3").text().trim();
+		let link = $(el).find("a").attr("href");
+
+		if (!title || !link) return;
+
+		// 구글 뉴스는 링크 앞에 ./ 나 붙어서 처리 필요
+		if (link.startsWith("./")) {
+			link = "https://news.google.com" + link.replace(".", "");
+		}
+
+		items.push({ title, url: link });
 	});
 
-	// 점수 TOP 3 문장 선택 (중복 없이)
-	const topSentences = scored
-		.sort((a, b) => b.score - a.score)
-		.slice(0, 3)
-		.map(item => forcePeriod(item.sentence));
-
-	// 한 줄 요약 (가장 점수 높은 문장을 선택)
-	const headline = forcePeriod(scored.sort((a, b) => b.score - a.score)[0].sentence);
-
-	return `${headline}\n${topSentences.join("\n")}`;
+	return items.slice(0, 5); // 최대 5개만
 }
 
-/* --------------------------------------------------------
-	본문 추출 함수
--------------------------------------------------------- */
-function extractArticle(html) {
-	try {
-		const cleaned = html
-			.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-			.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
 
-		const match = cleaned.match(
-			/<div[^>]*id=["']dic_area["'][^>]*>([\s\S]*?)<\/div>/
-		);
+/* ---------------------------------------------------
+   STEP 2 — 실제 원문 URL로 이동해서 본문 추출
+--------------------------------------------------- */
 
-		if (match) {
-			let text = match[1]
-				.replace(/<[^>]+>/g, " ")
-				.replace(/\s+/g, " ")
-				.trim();
+async function extractArticle(url) {
 
-			text = text.replace(/^\[[^\]]+\]\s*/, "");
-
-			return text;
-		}
-
-		return "";
-	} catch {
-		return "";
-	}
-}
-
-/* --------------------------------------------------------
-	네이버 뉴스 검색
--------------------------------------------------------- */
-async function getNaverNews(query) {
-	const ID = process.env.NAVER_CLIENT_ID;
-	const SECRET = process.env.NAVER_CLIENT_SECRET;
-
-	if (!ID || !SECRET) return [];
-
-	const url = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(
-		query
-	)}&display=10&sort=sim`;
-
-	const res = await fetch(url, {
+	// 구글 뉴스 링크를 언론사 링크로 자동 변환
+	const redirected = await fetch(url, {
+		redirect: "follow",
 		headers: {
-			"X-Naver-Client-Id": ID,
-			"X-Naver-Client-Secret": SECRET,
+			"User-Agent":
+				"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36",
 		},
 	});
 
-	const data = await res.json();
-	if (!data.items) return [];
+	const finalUrl = redirected.url;
+	const html = await redirected.text();
+	const $ = cheerio.load(html);
 
-	return data.items.map((item) => ({
-		title: item.title.replace(/<[^>]+>/g, "").trim(),
-		url: item.link,
-		snippet: item.description.replace(/<[^>]+>/g, "").trim()
-	}));
-}
+	// 언론사 사이트마다 본문 구조 다름 → 여러 패턴 대응
+	const selectors = [
+		"article",
+		"#articleBody",
+		".news_end",
+		".article",
+		"#articeBody",
+		".post-content",
+		"#content",
+	];
 
-/* --------------------------------------------------------
-	PC → 모바일 네이버 URL 변환
--------------------------------------------------------- */
-function normalizeNaverUrl(url) {
-	try {
-		if (url.includes("n.news.naver.com")) {
-			return url.replace("n.news.naver.com", "m.news.naver.com");
-		}
-
-		const oidMatch = url.match(/oid=(\d+)/);
-		const aidMatch = url.match(/aid=(\d+)/);
-
-		if (oidMatch && aidMatch) {
-			return `https://m.news.naver.com/article/${oidMatch[1]}/${aidMatch[1]}`;
-		}
-	} catch {}
-
-	return url;
-}
-
-/* --------------------------------------------------------
-	Vercel API Handler (필수)
--------------------------------------------------------- */
-export default async function handler(req, res) {
-	const { query } = req.query;
-
-	if (!query) {
-		return res.status(400).json({ error: "query 파라미터가 필요합니다." });
+	for (const sel of selectors) {
+		const text = $(sel).text().trim();
+		if (text.length > 150) return text; // 충분히 긴 본문이면 채택
 	}
 
-	const articles = await getNaverNews(query);
-	const result = [];
+	return null;
+}
 
-	for (const article of articles) {
-		const mobile = normalizeNaverUrl(article.url);
+/* ---------------------------------------------------
+   STEP 3 — 기사 본문 요약
+--------------------------------------------------- */
 
-		let bodyText = "";
+async function summarize(text) {
+	const clean = text.replace(/\s+/g, " ").trim();
 
-		try {
-			const html = await fetch(mobile).then(r => r.text());
-			bodyText = extractArticle(html);
-		} catch {
-			bodyText = "";
-		}
+	const prompt = `
+아래 뉴스 기사의 전체 내용을 2~3줄로 자연스럽게 요약해줘.
+문장은 모두 한국어 평서문으로 끝맺음하고, 핵심만 포함해줘.
 
-		if (!bodyText && article.snippet) {
-			bodyText = article.snippet;
-		}
+기사 내용:
+${clean}
+`;
 
-		if (bodyText && article.title) {
-			bodyText = bodyText.replace(article.title, "").trim();
-		}
+	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+		},
+		body: JSON.stringify({
+			model: "gpt-4o-mini",
+			messages: [{ role: "user", content: prompt }],
+			max_tokens: 200,
+		}),
+	}).then((r) => r.json());
 
-		const summary = await summarize(bodyText);
-
-		result.push({
-			title: article.title,
-			url: article.url,
-			summary
-		});
-	}
-
-	return res.status(200).json({ articles: result });
+	return response?.choices?.[0]?.message?.content || "요약 실패";
 }
