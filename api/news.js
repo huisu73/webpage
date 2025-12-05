@@ -1,4 +1,3 @@
-import xml2js from "xml2js";
 import * as cheerio from "cheerio";
 
 export default async function handler(req, res) {
@@ -6,21 +5,23 @@ export default async function handler(req, res) {
 		const query = req.query.query;
 		if (!query) return res.status(400).json({ error: "Missing query" });
 
-		// 1) RSS에서 기사 목록 가져오기
-		const rssItems = await fetchGoogleRSS(query);
+		const results = await searchGoogleNews(query);
 
-		// 2) 기사 상세 데이터 구성
 		const articles = [];
-		for (const item of rssItems) {
-			const content = await extractArticle(item.url);
+		for (const item of results) {
+			const realUrl = await getRealArticleUrl(item.url); // 원문 URL 찾기
+			const content = realUrl ? await extractArticle(realUrl) : null;
 
 			let summary = "";
-			if (content) summary = await summarize(content);
-			else summary = "본문을 가져오지 못했습니다.";
+			if (content) {
+				summary = await summarize(content);
+			} else {
+				summary = "본문을 가져오지 못했습니다.";
+			}
 
 			articles.push({
 				title: item.title,
-				url: item.url,
+				url: realUrl || item.url,
 				summary,
 			});
 		}
@@ -29,76 +30,106 @@ export default async function handler(req, res) {
 
 	} catch (err) {
 		console.error(err);
-		return res.status(500).json({ error: "Server Error" });
+		return res.status(500).json({ error: "Server error" });
 	}
 }
 
 /* ---------------------------------------------------
-   STEP 1 — Google RSS로 뉴스 목록 가져오기
+   STEP 1 — Google 뉴스 검색 결과 가져오기
 --------------------------------------------------- */
-async function fetchGoogleRSS(keyword) {
-	const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(
-		keyword
-	)}&hl=ko&gl=KR&ceid=KR:ko`;
 
-	const xml = await fetch(rssUrl).then((r) => r.text());
+async function searchGoogleNews(keyword) {
+	const url = `https://news.google.com/search?q=${encodeURIComponent(keyword)}&hl=ko&gl=KR&ceid=KR%3Ako`;
 
-	const parsed = await xml2js.parseStringPromise(xml);
+	const html = await fetch(url, {
+		headers: { "User-Agent": "Mozilla/5.0" }
+	}).then(r => r.text());
 
-	const items =
-		parsed.rss.channel[0].item?.map((i) => ({
-			title: i.title[0],
-			url: i.link[0], // RSS는 원문 링크를 바로 제공함!!
-		})) ?? [];
+	const $ = cheerio.load(html);
+	const items = [];
+
+	$("article").each((_, el) => {
+		const title = $(el).find("h3").text().trim();
+		let link = $(el).find("a").attr("href");
+
+		if (!title || !link) return;
+		if (link.startsWith("./"))
+			link = "https://news.google.com" + link.slice(1);
+
+		items.push({ title, url: link });
+	});
 
 	return items.slice(0, 5);
 }
 
 /* ---------------------------------------------------
-   STEP 2 — 기사 본문 가져오기 (여러 패턴 지원)
+   STEP 2 — Google 뉴스 → 원문 URL 찾기
 --------------------------------------------------- */
-async function extractArticle(url) {
-	const response = await fetch(url, {
-		redirect: "follow",
-		headers: {
-			"User-Agent":
-				"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
-		},
-	});
 
-	const html = await response.text();
-	const $ = cheerio.load(html);
+async function getRealArticleUrl(googleUrl) {
+	try {
+		const html = await fetch(googleUrl, {
+			headers: { "User-Agent": "Mozilla/5.0" }
+		}).then(r => r.text());
 
-	const selectors = [
-		"article",
-		"#articleBody",
-		".news_end",
-		".article",
-		"#articeBody",
-		".post-content",
-		"#content",
-	];
+		const $ = cheerio.load(html);
 
-	for (const sel of selectors) {
-		const text = $(sel).text().trim();
-		if (text.length > 150) return text; // 충분히 길면 본문으로 인정
+		// canonical 링크가 실제 원문임
+		const real = $("link[rel='canonical']").attr("href");
+
+		return real || null;
+	} catch (e) {
+		return null;
 	}
-
-	return null;
 }
 
 /* ---------------------------------------------------
-   STEP 3 — GPT 요약 생성
+   STEP 3 — 실제 기사 본문 추출
 --------------------------------------------------- */
-async function summarize(text) {
-	const clean = text.replace(/\s+/g, " ").trim();
 
+async function extractArticle(url) {
+	try {
+		const html = await fetch(url, {
+			headers: { "User-Agent": "Mozilla/5.0" }
+		}).then(r => r.text());
+
+		const $ = cheerio.load(html);
+
+		// 더 많은 셀렉터 추가
+		const selectors = [
+			"article",
+			"#news_body_area",
+			"#article_body",
+			".article_body",
+			".news_end",
+			".post-content",
+			"#content",
+			".article-view",
+			".view_txt",
+		];
+
+		for (const sel of selectors) {
+			const text = $(sel).text().trim();
+			if (text.length > 200) return text;
+		}
+
+		return null;
+	} catch (err) {
+		return null;
+	}
+}
+
+/* ---------------------------------------------------
+   STEP 4 — OpenAI 요약
+--------------------------------------------------- */
+
+async function summarize(text) {
 	const prompt = `
-아래 뉴스 기사의 전체 내용을 바탕으로 자연스럽고 명확한 한국어 요약문을 2~3줄로 작성해줘.
-모든 문장은 평서문으로 끝나야 하고, 핵심 내용만 담아줘.
+아래 뉴스 기사를 2~3줄의 자연스러운 한국어로 요약해줘.
+항상 문장을 평서문으로 끝내줘.
 
 기사 내용:
-${clean}
+${text}
 `;
 
 	const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -110,9 +141,9 @@ ${clean}
 		body: JSON.stringify({
 			model: "gpt-4o-mini",
 			messages: [{ role: "user", content: prompt }],
-			max_tokens: 180,
+			max_tokens: 200,
 		}),
-	}).then((r) => r.json());
+	}).then(r => r.json());
 
 	return response?.choices?.[0]?.message?.content || "요약 실패";
 }
