@@ -37,14 +37,50 @@ async function summarize(text) {
 	const base = cleanText(text);
 	if (!base) return "요약을 생성할 수 없습니다.";
 
+	// 전체 문장을 분리
 	const sentences = splitSentences(base);
+	if (sentences.length === 0) return "요약을 생성할 수 없습니다.";
 
-	const keySentence = extractKeySentence(sentences);
-	const keyLine = forcePeriod(keySentence);
+	// 불용어(Stopwords) – 중요도 계산 보정용
+	const stopwords = ["그리고", "하지만", "그러나", "또한", "이어서", "이에 따르면"];
 
-	const body = sentences.slice(0, 3).map(forcePeriod).join("\n");
+	// 문장 중요도 점수 계산
+	const scored = sentences.map((s, idx) => {
+		let score = 0;
 
-	return `${keyLine}\n${body}`;
+		// 1) 길이가 너무 짧은 문장은 제외
+		if (s.length < 20) score -= 5;
+
+		// 2) 중복되는 접두 불용어가 있으면 감점
+		stopwords.forEach(sw => {
+			if (s.startsWith(sw)) score -= 2;
+		});
+
+		// 3) 본문 전체에서 중요한 단어가 포함되면 가산점
+		const keywords = ["수사", "요구", "혐의", "논란", "입장", "사과", "공식", "경찰"];
+		keywords.forEach(kw => {
+			if (s.includes(kw)) score += 3;
+		});
+
+		// 4) 본문 중간부의 문장도 골고루 선택되도록 가중치 부여
+		const normalizedIndex = idx / sentences.length;
+		if (normalizedIndex > 0.2 && normalizedIndex < 0.8) {
+			score += 1.5;
+		}
+
+		return { sentence: s, score };
+	});
+
+	// 점수 TOP 3 문장 선택 (중복 없이)
+	const topSentences = scored
+		.sort((a, b) => b.score - a.score)
+		.slice(0, 3)
+		.map(item => forcePeriod(item.sentence));
+
+	// 한 줄 요약 (가장 점수 높은 문장을 선택)
+	const headline = forcePeriod(scored.sort((a, b) => b.score - a.score)[0].sentence);
+
+	return `${headline}\n${topSentences.join("\n")}`;
 }
 
 /* --------------------------------------------------------
