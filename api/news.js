@@ -1,10 +1,10 @@
 import fetch from "node-fetch";
 
 // ----------------------------------------------
-// simpleSummary: HF 실패 시 항상 동작하는 안전 요약
+// 1) HF 실패 시 항상 동작하는 단순 요약
 // ----------------------------------------------
 function simpleSummary(text, maxSentences = 3) {
-	if (!text) return "요약할 내용이 없습니다.";
+	if (!text) return "요약을 생성할 수 없습니다.";
 
 	const clean = text.replace(/\s+/g, " ");
 	const sentences = clean
@@ -12,34 +12,40 @@ function simpleSummary(text, maxSentences = 3) {
 		.map((s) => s.trim())
 		.filter(Boolean);
 
+	if (sentences.length === 0) return "요약을 생성할 수 없습니다.";
+
 	return sentences.slice(0, maxSentences).join(" ");
 }
 
 // ----------------------------------------------
-// 긴 기사 요약 (HF chunk summarization + fallback)
+// 2) 긴 기사 요약 (항상 '내용'만 요약, 제목은 사용 X)
 // ----------------------------------------------
-async function summarize(text, title) {
+async function summarize(text) {
 	const HF_TOKEN = process.env.HF_TOKEN;
 
-	if (!HF_TOKEN) return simpleSummary(text || title, 3);
-
-	const cleanText = (text || title || "")
+	const baseText = (text || "")
 		.replace(/\s+/g, " ")
 		.replace(/<[^>]+>/g, "")
 		.trim();
 
-	if (!cleanText) return simpleSummary(title, 3);
+	if (!baseText) {
+		return "요약을 생성할 수 없습니다.";
+	}
+
+	// HF 토큰 없으면 바로 simpleSummary
+	if (!HF_TOKEN) {
+		return simpleSummary(baseText, 3);
+	}
 
 	// chunk 나누기 (900자 단위)
 	const chunkSize = 900;
 	const chunks = [];
-	for (let i = 0; i < cleanText.length; i += chunkSize) {
-		chunks.push(cleanText.slice(i, i + chunkSize));
+	for (let i = 0; i < baseText.length; i += chunkSize) {
+		chunks.push(baseText.slice(i, i + chunkSize));
 	}
 
 	const HF_URL = "https://api-inference.huggingface.co/models/sshleifer/distilbart-cnn-12-6";
 
-	// 부분 요약
 	async function summarizeChunk(chunk) {
 		const payload = {
 			inputs: chunk,
@@ -69,9 +75,9 @@ async function summarize(text, title) {
 		if (part) partialSummaries.push(part);
 	}
 
-	// HF 완전 실패 → simpleSummary
+	// HF 요약 완전 실패 → simpleSummary
 	if (partialSummaries.length === 0) {
-		return simpleSummary(cleanText, 3);
+		return simpleSummary(baseText, 3);
 	}
 
 	const combined = partialSummaries.join(" ");
@@ -100,18 +106,28 @@ async function summarize(text, title) {
 			.map((s) => s.trim())
 			.filter(Boolean);
 
+		if (sentences.length === 0) {
+			return simpleSummary(baseText, 3);
+		}
+
 		sentences = sentences.slice(0, 3).map((s) => s + ".");
 		return sentences.join("\n");
 	} catch {
-		return simpleSummary(cleanText, 3);
+		return simpleSummary(baseText, 3);
 	}
 }
 
 // ----------------------------------------------
-// PC 뉴스 URL → 모바일 뉴스 URL로 변환
+// 3) PC 뉴스 URL → 모바일 뉴스 URL로 변환
 // ----------------------------------------------
 function normalizeNaverUrl(url) {
 	try {
+		// 이미 모바일(n.news)인 경우 m.news로 통일
+		if (url.includes("n.news.naver.com")) {
+			return url.replace("n.news.naver.com", "m.news.naver.com");
+		}
+
+		// PC 버전: oid, aid 추출해서 모바일 기사 URL로 변환
 		const oidMatch = url.match(/oid=(\d+)/);
 		const aidMatch = url.match(/aid=(\d+)/);
 
@@ -126,7 +142,7 @@ function normalizeNaverUrl(url) {
 }
 
 // ----------------------------------------------
-// HTML → 기사 본문(#dic_area) 추출
+// 4) HTML → 기사 본문(#dic_area) 추출
 // ----------------------------------------------
 function extractArticle(html) {
 	try {
@@ -144,9 +160,8 @@ function extractArticle(html) {
 				.replace(/\s+/g, " ")
 				.trim();
 
-			// 기자명, 날짜 제거
-			text = text.replace(/^\[[^\]]+\]/, "");
-			text = text.replace(/\d{4}\.\d{2}\.\d{2}\s*\d{2}:\d{2}/, "");
+			// (선택) 대괄호로 시작하는 태그/제목 제거
+			text = text.replace(/^\[[^\]]+\]\s*/, "");
 
 			return text;
 		}
@@ -158,7 +173,7 @@ function extractArticle(html) {
 }
 
 // ----------------------------------------------
-// 네이버 뉴스 검색 API
+// 5) 네이버 뉴스 검색 API (title, link, description)
 // ----------------------------------------------
 async function getNaverNews(query) {
 	const ID = process.env.NAVER_CLIENT_ID;
@@ -185,12 +200,17 @@ async function getNaverNews(query) {
 			.replace(/<[^>]+>/g, "")
 			.replace(/&quot;/g, '"')
 			.replace(/&amp;/g, "&"),
-		url: item.link,
+		url: item.link, // ★ 네이버 뉴스 링크만 사용
+		snippet: item.description
+			.replace(/<[^>]+>/g, "")
+			.replace(/&quot;/g, '"')
+			.replace(/&amp;/g, "&")
+			.trim(),
 	}));
 }
 
 // ----------------------------------------------
-// API Handler
+// 6) API Handler
 // ----------------------------------------------
 export default async function handler(req, res) {
 	const { query } = req.query;
@@ -205,13 +225,27 @@ export default async function handler(req, res) {
 	for (const article of articles) {
 		const mobile = normalizeNaverUrl(article.url);
 
-		let finalText = "";
+		let bodyText = "";
+
+		// 1차 시도: 모바일 네이버 기사 본문 크롤링
 		try {
 			const html = await fetch(mobile).then((r) => r.text());
-			finalText = extractArticle(html);
-		} catch {}
+			bodyText = extractArticle(html);
+		} catch {
+			bodyText = "";
+		}
 
-		const summary = await summarize(finalText, article.title);
+		// 2차 시도: 본문이 비어 있으면 description(snippet) 사용
+		if (!bodyText && article.snippet) {
+			bodyText = article.snippet;
+		}
+
+		// 제목은 요약에서 완전히 제거 (내용만 요약)
+		if (bodyText && article.title) {
+			bodyText = bodyText.replace(article.title, "").trim();
+		}
+
+		const summary = await summarize(bodyText);
 
 		result.push({
 			title: article.title,
