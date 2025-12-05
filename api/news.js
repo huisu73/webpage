@@ -21,10 +21,7 @@ function simpleSummary(text, maxSentences = 3) {
 async function summarize(text, title) {
 	const HF_TOKEN = process.env.HF_TOKEN;
 
-	// HF 토큰 없으면 simpleSummary 강제 사용
-	if (!HF_TOKEN) {
-		return simpleSummary(text || title, 3);
-	}
+	if (!HF_TOKEN) return simpleSummary(text || title, 3);
 
 	const cleanText = (text || title || "")
 		.replace(/\s+/g, " ")
@@ -42,7 +39,7 @@ async function summarize(text, title) {
 
 	const HF_URL = "https://api-inference.huggingface.co/models/sshleifer/distilbart-cnn-12-6";
 
-	// 부분 요약 함수
+	// 부분 요약
 	async function summarizeChunk(chunk) {
 		const payload = {
 			inputs: chunk,
@@ -66,14 +63,13 @@ async function summarize(text, title) {
 		}
 	}
 
-	// partial summarize
 	const partialSummaries = [];
 	for (const chunk of chunks) {
 		const part = await summarizeChunk(chunk);
 		if (part) partialSummaries.push(part);
 	}
 
-	// HF 요약 완전 실패 → simpleSummary
+	// HF 완전 실패 → simpleSummary
 	if (partialSummaries.length === 0) {
 		return simpleSummary(cleanText, 3);
 	}
@@ -95,11 +91,9 @@ async function summarize(text, title) {
 			},
 			body: JSON.stringify(finalPayload),
 		});
-
 		const finalData = await finalRes.json();
 		let finalText = finalData?.[0]?.summary_text || "";
 
-		// 문장 분할 후 2~3문장 선택
 		let sentences = finalText
 			.replace(/\n+/g, " ")
 			.split(/\.|\?|!/g)
@@ -107,7 +101,6 @@ async function summarize(text, title) {
 			.filter(Boolean);
 
 		sentences = sentences.slice(0, 3).map((s) => s + ".");
-
 		return sentences.join("\n");
 	} catch {
 		return simpleSummary(cleanText, 3);
@@ -115,89 +108,89 @@ async function summarize(text, title) {
 }
 
 // ----------------------------------------------
-// 네이버 PC 뉴스 → 모바일 뉴스 변환
+// PC 뉴스 URL → 모바일 뉴스 URL로 변환
 // ----------------------------------------------
-function toMobileUrl(url) {
+function normalizeNaverUrl(url) {
 	try {
-		if (url.includes("news.naver.com")) {
-			return url.replace("news.naver.com", "m.news.naver.com");
+		const oidMatch = url.match(/oid=(\d+)/);
+		const aidMatch = url.match(/aid=(\d+)/);
+
+		if (oidMatch && aidMatch) {
+			const oid = oidMatch[1];
+			const aid = aidMatch[1];
+			return `https://m.news.naver.com/article/${oid}/${aid}`;
 		}
 	} catch {}
+
 	return url;
 }
 
 // ----------------------------------------------
-// HTML → 텍스트 추출 (#dic_area)
+// HTML → 기사 본문(#dic_area) 추출
 // ----------------------------------------------
-function extractText(html) {
+function extractArticle(html) {
 	try {
 		const cleaned = html
 			.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
 			.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
 
-		// 네이버 모바일 기사 본문
-		const dicMatch = cleaned.match(
+		const match = cleaned.match(
 			/<div[^>]*id=["']dic_area["'][^>]*>([\s\S]*?)<\/div>/
 		);
 
-		if (dicMatch) {
-			return dicMatch[1]
+		if (match) {
+			let text = match[1]
 				.replace(/<[^>]+>/g, " ")
 				.replace(/\s+/g, " ")
 				.trim();
+
+			// 기자명, 날짜 제거
+			text = text.replace(/^\[[^\]]+\]/, "");
+			text = text.replace(/\d{4}\.\d{2}\.\d{2}\s*\d{2}:\d{2}/, "");
+
+			return text;
 		}
 
-		// fallback
-		return cleaned
-			.replace(/<[^>]+>/g, " ")
-			.replace(/\s+/g, " ")
-			.trim();
+		return "";
 	} catch {
 		return "";
 	}
 }
 
 // ----------------------------------------------
-// 네이버 뉴스 검색 API 호출
+// 네이버 뉴스 검색 API
 // ----------------------------------------------
 async function getNaverNews(query) {
-	const NAVER_ID = process.env.NAVER_CLIENT_ID;
-	const NAVER_SECRET = process.env.NAVER_CLIENT_SECRET;
+	const ID = process.env.NAVER_CLIENT_ID;
+	const SECRET = process.env.NAVER_CLIENT_SECRET;
 
-	if (!NAVER_ID || !NAVER_SECRET) {
-		console.error("네이버 API 키 없음");
-		return [];
-	}
+	if (!ID || !SECRET) return [];
 
 	const url = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(
 		query
 	)}&display=10&sort=sim`;
 
-	try {
-		const res = await fetch(url, {
-			headers: {
-				"X-Naver-Client-Id": NAVER_ID,
-				"X-Naver-Client-Secret": NAVER_SECRET,
-			},
-		});
+	const res = await fetch(url, {
+		headers: {
+			"X-Naver-Client-Id": ID,
+			"X-Naver-Client-Secret": SECRET,
+		},
+	});
 
-		const data = await res.json();
-		if (!data.items) return [];
+	const data = await res.json();
+	if (!data.items) return [];
 
-		return data.items.map((item) => ({
-			title: item.title
-				.replace(/<[^>]+>/g, "")
-				.replace(/&quot;/g, '"')
-				.replace(/&amp;/g, "&"),
-			url: item.originallink || item.link,
-		}));
-	} catch {
-		return [];
-	}
+	return data.items.map((item) => ({
+		title: item.title
+			.replace(/<[^>]+>/g, "")
+			.replace(/&quot;/g, '"')
+			.replace(/&amp;/g, "&"),
+		url: item.originallink || item.link,
+	}));
 }
 
 // ----------------------------------------------
-// API Handler (Vercel Serverless)
+// API Handler
 // ----------------------------------------------
 export default async function handler(req, res) {
 	const { query } = req.query;
@@ -206,32 +199,26 @@ export default async function handler(req, res) {
 		return res.status(400).json({ error: "query 파라미터가 필요합니다." });
 	}
 
-	try {
-		const articles = await getNaverNews(query);
-		const result = [];
+	const articles = await getNaverNews(query);
+	const result = [];
 
-		for (const article of articles) {
-			const mobileUrl = toMobileUrl(article.url);
-			let summary = "";
+	for (const article of articles) {
+		const mobile = normalizeNaverUrl(article.url);
 
-			try {
-				const html = await fetch(mobileUrl).then((r) => r.text());
-				const text = extractText(html);
-				summary = await summarize(text, article.title);
-			} catch {
-				summary = simpleSummary(article.title, 3);
-			}
+		let finalText = "";
+		try {
+			const html = await fetch(mobile).then((r) => r.text());
+			finalText = extractArticle(html);
+		} catch {}
 
-			result.push({
-				title: article.title,
-				url: article.url,
-				summary,
-			});
-		}
+		const summary = await summarize(finalText, article.title);
 
-		return res.status(200).json({ articles: result });
-	} catch (e) {
-		console.error(e);
-		return res.status(500).json({ error: "서버 내부 오류" });
+		result.push({
+			title: article.title,
+			url: article.url,
+			summary,
+		});
 	}
+
+	return res.status(200).json({ articles: result });
 }
