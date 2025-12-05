@@ -50,13 +50,17 @@ async function searchGoogleNewsRSS(keyword) {
 	const items = [];
 
 	$("item").each((_, el) => {
-		const title = $(el).find("title").text();
-		const link = $(el).find("link").text();
+        const title = $(el).find("title").text().trim();
+        const link = $(el).find("link").text().trim();
 
-		if (title && link) {
-			items.push({ title, link });
-		}
-	});
+        if (!title || !link) return;
+
+    // RSS 링크 내부에서 실제 언론사 링크 추출
+        const realMatch = link.match(/url=(https?:\/\/[^&]+)/);
+        const realUrl = realMatch ? decodeURIComponent(realMatch[1]) : link;
+
+        items.push({ title, url: realUrl });
+    });
 
 	return items.slice(0, 5); // 상위 최대 5개 기사만
 }
