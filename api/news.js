@@ -53,15 +53,16 @@ async function searchGoogleNewsRSS(keyword) {
     $("item").each((_, el) => {
         const title = $(el).find("title").text().trim();
 
-        // ① 가장 정확한 URL인 <guid> 우선 사용
+    // ⭐ guid가 진짜 URL임
         let realUrl = $(el).find("guid").text().trim();
 
-        // ② 없으면 <link> 사용
+    // guid가 비어있으면 fallback으로 link 사용
         if (!realUrl) {
             realUrl = $(el).find("link").text().trim();
         }
 
-        if (!title || !realUrl) return;
+    // URL 아닌 값들은 제외
+        if (!realUrl.startsWith("http")) return;
 
         items.push({ title, url: realUrl });
     });
