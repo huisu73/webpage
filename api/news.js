@@ -1,4 +1,4 @@
-// /api/news.js
+import * as cheerio from "cheerio";
 
 export default async function handler(req, res) {
 	try {
@@ -37,8 +37,6 @@ export default async function handler(req, res) {
 /* ---------------------------------------------------
    STEP 1 — 구글 뉴스 검색 페이지 HTML 가져오기
 --------------------------------------------------- */
-import cheerio from "cheerio";
-
 async function searchGoogleNews(keyword) {
 	const url = `https://news.google.com/search?q=${encodeURIComponent(keyword)}&hl=ko&gl=KR&ceid=KR%3Ako`;
 
