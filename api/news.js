@@ -41,7 +41,9 @@ async function summarize(text, title) {
 
     if (!HF_TOKEN) return "요약 생성 실패(HF_TOKEN 없음)";
 
-    const cleanText = text.replace(/\s+/g, " ").slice(0, 1200);
+    const inputText = (text || title || "내용 없음")
+        .replace(/\s+/g, " ")
+        .slice(0, 1200);
 
     const payload = {
         inputs: inputText,
@@ -54,21 +56,21 @@ async function summarize(text, title) {
 
     try {
         const res = await fetch(
-        "https://api-inference.huggingface.co/models/sshleifer/distilbart-cnn-12-6",
-        {
-            method: "POST",
-            headers: {
-            Authorization: `Bearer ${HF_TOKEN}`,
-            "Content-Type": "application/json"
-            },
-            body: JSON.stringify(payload)
-        }
+            "https://api-inference.huggingface.co/models/sshleifer/distilbart-cnn-12-6",
+            {
+                method: "POST",
+                headers: {
+                Authorization: `Bearer ${HF_TOKEN}`,
+                "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+            }
         );
 
         const data = await res.json();
 
         if (Array.isArray(data) && data[0]?.summary_text) {
-        return data[0].summary_text.trim();
+            return data[0].summary_text.trim();
         }
 
         console.warn("HF 응답 예외:", data);
