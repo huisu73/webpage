@@ -49,23 +49,27 @@ async function searchGoogleNews(keyword) {
 		},
 	}).then((r) => r.text());
 
-	// h3 안의 a 태그만 추출하는 간단한 정규식 기반 파싱
-	const articleRegex = /<h3[^>]*><a[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/g;
 	const items = [];
 
+	const linkRegex = /<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/g;
 	let match;
-	while ((match = articleRegex.exec(html)) !== null) {
-		let url = match[1];
-		const title = match[2].replace(/<[^>]+>/g, "").trim();
 
-		if (url.startsWith("./")) {
-			url = "https://news.google.com" + url.substring(1);
+	while ((match = linkRegex.exec(html)) !== null) {
+		let href = match[1];
+		let title = match[2].replace(/<[^>]+>/g, "").trim();
+
+		// 기사 링크만 필터링
+		if (!href.includes("/articles/")) continue;
+		if (!title) continue;
+
+		if (href.startsWith("./")) {
+			href = "https://news.google.com" + href.substring(1);
 		}
 
-		items.push({ title, url });
+		items.push({ title, url: href });
 	}
 
-	return items.slice(0, 5); // 최대 5개 기사만 사용
+	return items.slice(0, 5);
 }
 
 /* ---------------------------------------------------
