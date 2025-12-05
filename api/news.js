@@ -30,7 +30,8 @@ async function summarize(text, title) {
     }
 
   // 요약 모델 URL
-    const HF_URL = "https://api-inference.huggingface.co/models/sshleifer/distilbart-cnn-12-6";
+    const HF_URL =
+    "https://api-inference.huggingface.co/models/sshleifer/distilbart-cnn-12-6";
 
   // ---------------------------
   // 3) 각 청크별 부분 요약
@@ -77,7 +78,7 @@ async function summarize(text, title) {
   // ---------------------------
   // 4) 부분 요약들을 합쳐서 하나의 텍스트로 결합
   // ---------------------------
-    const combinedSummary = partialSummaries.join(" ");
+    const combined = partialSummaries.join(" ");
 
   // ---------------------------
   // 5) 최종 요약 → 3줄 요약
@@ -85,7 +86,7 @@ async function summarize(text, title) {
     const finalPayload = {
         inputs: combinedSummary,
         parameters: {
-        max_length: 130,
+        max_length: 150,
         min_length: 60,
         do_sample: false
         }
@@ -105,17 +106,56 @@ async function summarize(text, title) {
     const finalText = finalData?.[0]?.summary_text || "";
 
     // 3줄로 정제
-    const lines = finalText
+    let sentences = finalText
         .replace(/\n+/g, " ")
         .split(/\.|\?|\!/g)
         .filter(Boolean)
-        .slice(0, 3)
         .map((s) => s.trim() + ".");
+
+    sentences = sentences.slice(0, 3).map((s) => s + ".");
 
     return lines.join("\n");
     } catch (e) {
     console.error("Final summary error:", e);
     return "요약 생성 실패(최종 단계 오류)";
+    }
+}
+
+function toMobileUrl(url) {
+    try {
+        if (url.includes("news.naver.com")) {
+            return url.replace("news.naver.com", "m.news.naver.com");
+        }
+    } catch {}
+    return url;
+}
+
+function extractText(html) {
+    try {
+        const cleaned = html
+            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
+
+        const dicAreaMatch = cleaned.match(
+            /<div[^>]*id=["']dic_area["'][^>]*>([\s\S]*?)<\/div>/
+        );
+
+        if (dicAreaMatch) {
+            return dicAreaMatch[1]
+                .replace(/<[^>]+>/g, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+        }
+
+        const fallback = cleaned
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        return fallback;
+    } catch (e) {
+        console.error("본문 추출 실패:", e);
+        return "";
     }
 }
 
