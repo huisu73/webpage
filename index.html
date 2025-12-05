@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>뉴스 검색 & AI 요약</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <h1>뉴스 검색 & AI 요약</h1>
+      <p class="subtitle">키워드를 입력하면 네이버 뉴스와 AI 요약을 한 번에 확인해보세요.</p>
+    </header>
+
+    <section class="search-section">
+      <div class="search-box">
+        <input
+          type="text"
+          id="searchInput"
+          placeholder="검색할 뉴스 키워드를 입력하세요"
+          autocomplete="off"
+        />
+        <button id="searchBtn">검색</button>
+      </div>
+      <div id="loading" class="loading hidden">검색 중입니다...</div>
+    </section>
+
+    <!-- 첫 번째 기사 강조 영역 -->
+    <section class="highlight-section hidden" id="highlightSection">
+      <h2 id="newsTitle"></h2>
+      <p id="newsSummary"></p>
+    </section>
+
+    <!-- 결과 카드 리스트 -->
+    <section class="results-section">
+      <div id="resultCard" class="results-container">
+        <!-- JS에서 카드가 추가됨 -->
+      </div>
+    </section>
+
+    <footer class="app-footer">
+      <small>뉴스 데이터: 네이버 뉴스 | 요약: OpenAI(gpt-4o-mini)</small>
+    </footer>
+  </div>
+
+  <script src="/script.js" defer></script>
+</body>
+</html>
