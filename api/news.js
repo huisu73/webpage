@@ -54,13 +54,20 @@ async function searchGoogleNewsRSS(keyword) {
 
     $("item").each((_, el) => {
         const title = $(el).find("title").text().trim();
-        const link = $(el).find("link").text().trim();  // <--- 이것만 사용
 
-        if (!title || !link) return;
+        // ⭐ 진짜 기사 URL
+        let realUrl = $(el).find("source").attr("url");
+
+        // 만약 없으면 link 사용 (예비용)
+        if (!realUrl) {
+            realUrl = $(el).find("link").text().trim();
+        }
+
+        if (!title || !realUrl) return;
 
         items.push({
             title,
-            url: link, // 이것만 있으면 됨
+            url: realUrl,
         });
     });
 
