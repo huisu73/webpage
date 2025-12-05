@@ -1,89 +1,81 @@
-// /api/news.js
 import { load } from "cheerio";
 
 export default async function handler(req, res) {
 	try {
 		const query = req.query.query;
-		if (!query) {
-			return res.status(400).json({ error: "Missing query" });
-		}
+		if (!query) return res.status(400).json({ error: "Missing query" });
 
-		const results = await searchGoogleNews(query); // 구글 뉴스 검색
+		// STEP 1: RSS에서 뉴스 목록 가져오기
+		const results = await searchGoogleNewsRSS(query);
+
 		const articles = [];
 
+		// STEP 2: 각 기사 본문 크롤링 + 요약
 		for (const item of results) {
-			const articleText = await extractArticle(item.url); // 본문 추출
+			const articleText = await extractArticle(item.link);
 
 			let summary = "";
 			if (articleText) {
-				summary = await summarize(articleText); // AI 요약
+				summary = await summarize(articleText);
 			} else {
 				summary = "본문을 가져오지 못했습니다.";
 			}
 
 			articles.push({
 				title: item.title,
-				url: item.url,
+				url: item.link,
 				summary,
 			});
 		}
 
 		return res.status(200).json({ articles });
 	} catch (err) {
-		console.error(err);
+		console.error("API ERROR:", err);
 		return res.status(500).json({ error: "Server error" });
 	}
 }
 
 /* ---------------------------------------------------
-   STEP 1 — 구글 뉴스 검색 HTML 파싱
+   STEP 1 — Google News RSS 사용 (차단 없음!)
 --------------------------------------------------- */
-async function searchGoogleNews(keyword) {
-	const url = `https://news.google.com/search?q=${encodeURIComponent(
+
+async function searchGoogleNewsRSS(keyword) {
+	const url = `https://news.google.com/rss/search?q=${encodeURIComponent(
 		keyword
-	)}&hl=ko&gl=KR&ceid=KR%3Ako`;
+	)}&hl=ko&gl=KR&ceid=KR:ko`;
 
-	const html = await fetch(url, {
-		headers: {
-			"User-Agent":
-				"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36",
-		},
-	}).then((res) => res.text());
+	const xml = await fetch(url).then((r) => r.text());
+	const $ = load(xml, { xmlMode: true });
 
-	const $ = load(html);
 	const items = [];
 
-	$("article").each((_, el) => {
-		const title = $(el).find("h3").text().trim();
-		let link = $(el).find("a").attr("href");
+	$("item").each((_, el) => {
+		const title = $(el).find("title").text();
+		const link = $(el).find("link").text();
 
-		if (!title || !link) return;
-
-		if (link.startsWith("./")) {
-			link = "https://news.google.com" + link.replace(".", "");
+		if (title && link) {
+			items.push({ title, link });
 		}
-
-		items.push({ title, url: link });
 	});
 
-	return items.slice(0, 5); // 상위 5개 기사만 반환
+	return items.slice(0, 5); // 상위 최대 5개 기사만
 }
 
 /* ---------------------------------------------------
-   STEP 2 — 언론사 원문 본문 텍스트 추출
+   STEP 2 — 실제 기사 본문 크롤링
 --------------------------------------------------- */
+
 async function extractArticle(url) {
 	try {
-		const response = await fetch(url, {
+		const res = await fetch(url, {
 			redirect: "follow",
 			headers: {
 				"User-Agent":
-					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36",
+					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
 			},
 		});
 
-		const finalUrl = response.url;
-		const html = await response.text();
+		const html = await res.text();
 		const $ = load(html);
 
 		const selectors = [
@@ -93,8 +85,8 @@ async function extractArticle(url) {
 			"#articeBody",
 			".article",
 			".article-body",
-			"#content",
 			".post-content",
+			"#content",
 		];
 
 		for (const sel of selectors) {
@@ -110,20 +102,19 @@ async function extractArticle(url) {
 }
 
 /* ---------------------------------------------------
-   STEP 3 — OpenAI 요약 (2~3문장)
+   STEP 3 — OpenAI 요약
 --------------------------------------------------- */
+
 async function summarize(text) {
-	const clean = text.replace(/\s+/g, " ").trim();
-
 	const prompt = `
-아래 뉴스 기사 전체 내용을 2~3문장으로 자연스럽게 요약해줘.
-모든 문장은 한국어 평서문(이다/한다)으로 끝내고 핵심 정보만 포함해줘.
+다음 뉴스 기사를 한국어로 2~3문장으로 자연스럽게 요약해줘.
+문장은 모두 평서문으로 끝내고, 핵심 내용만 포함해줘.
 
-기사 내용:
-${clean}
+기사 전문:
+${text.replace(/\s+/g, " ").trim()}
 `;
 
-	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+	const res = await fetch("https://api.openai.com/v1/chat/completions", {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
@@ -136,8 +127,5 @@ ${clean}
 		}),
 	}).then((r) => r.json());
 
-	return (
-		response?.choices?.[0]?.message?.content ||
-		"요약을 생성하지 못했습니다."
-	);
+	return res?.choices?.[0]?.message?.content || "요약 실패";
 }
