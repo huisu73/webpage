@@ -4,9 +4,9 @@
 	"private": true,
 	"type": "module",
 	"dependencies": {
-		"cheerio": "^1.1.0",
-		"xml2js": "^0.6.2"
-	},
+        "cheerio": "^1.1.2",
+        "openai": "^4.76.0"
+    },
 	"scripts": {
 		"dev": "vercel dev",
 		"start": "vercel dev"
