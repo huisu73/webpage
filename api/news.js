@@ -43,28 +43,32 @@ export default async function handler(req, res) {
 --------------------------------------------------- */
 
 async function searchGoogleNewsRSS(keyword) {
-	const url = `https://news.google.com/rss/search?q=${encodeURIComponent(
-		keyword
-	)}&hl=ko&gl=KR&ceid=KR:ko`;
+    const url = `https://news.google.com/rss/search?q=${encodeURIComponent(
+        keyword
+    )}&hl=ko&gl=KR&ceid=KR:ko`;
 
-	const xml = await fetch(url).then((r) => r.text());
-	const $ = load(xml, { xmlMode: true });
+    const xml = await fetch(url).then((r) => r.text());
+    const $ = load(xml, { xmlMode: true });
 
-	const items = [];
+    const items = [];
 
-	$("item").each((_, el) => {
-		const title = $(el).find("title").text().trim();
-		const link = $(el).find("link").text().trim();
+    $("item").each((_, el) => {
+        const title = $(el).find("title").text().trim();
 
-		if (!title || !link) return;
+        // ★ 진짜 기사 URL은 여기! ★
+        let realUrl = $(el).find("guid").text().trim();
 
-		// 여기서는 일단 link 그대로 사용 (news.google.com/rss/articles/...)
-		// fetch에서 redirect: "follow" 로 실제 언론사 기사 페이지까지 따라감
-		items.push({ title, url: link });
-	});
+        // guid 없으면 link라도 사용
+        if (!realUrl) {
+            realUrl = $(el).find("link").text().trim();
+        }
 
-	// 최대 5개까지만 사용 (원하면 10개까지 늘려도 됨)
-	return items.slice(0, 5);
+        if (!title || !realUrl) return;
+
+        items.push({ title, url: realUrl });
+    });
+
+    return items.slice(0, 5);
 }
 
 /* ---------------------------------------------------
