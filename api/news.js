@@ -185,7 +185,7 @@ async function getNaverNews(query) {
 			.replace(/<[^>]+>/g, "")
 			.replace(/&quot;/g, '"')
 			.replace(/&amp;/g, "&"),
-		url: item.originallink || item.link,
+		url: item.link,
 	}));
 }
 
