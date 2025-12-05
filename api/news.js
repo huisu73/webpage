@@ -39,7 +39,7 @@ export default async function handler(req, res) {
 }
 
 /* ---------------------------------------------------
-   STEP 1 — Google News RSS 검색
+   //STEP 1 — Google News RSS 검색
 --------------------------------------------------- */
 
 async function searchGoogleNewsRSS(keyword) {
@@ -55,13 +55,8 @@ async function searchGoogleNewsRSS(keyword) {
     $("item").each((_, el) => {
         const title = $(el).find("title").text().trim();
 
-        // 🔥 한국 뉴스에서는 이 URL이 가장 정확함!!
-        let realUrl = $(el).find("source").attr("url");
-
-        // fallback: 그래도 없으면 link 사용 (Google 뉴스 redirect URL)
-        if (!realUrl) {
-            realUrl = $(el).find("link").text().trim();
-        }
+    // 🔥 진짜 기사 URL은 source 태그에 있음
+        const realUrl = $(el).find("link").text().trim();
 
         if (!title || !realUrl) return;
 
@@ -72,7 +67,7 @@ async function searchGoogleNewsRSS(keyword) {
 }
 
 /* ---------------------------------------------------
-   STEP 2 — 기사 본문 추출
+   //STEP 2 — 기사 본문 추출
 --------------------------------------------------- */
 
 async function extractArticle(url) {
@@ -123,7 +118,7 @@ async function extractArticle(url) {
 }
 
 /* ---------------------------------------------------
-   STEP 3 — OpenAI 요약 (2~3문장, 문장 끝마침 확실하게)
+   //STEP 3 — OpenAI 요약 (2~3문장, 문장 끝마침 확실하게)
 --------------------------------------------------- */
 
 async function summarize(text) {
